@@ -14,7 +14,7 @@ using nothing but names and addresses.
 
 | Macro F0.5 (out-of-fold) | Blocking recall | Candidates per entity | End-to-end runtime |
 |:---:|:---:|:---:|:---:|
-| **0.9869** | **98.2%** | **~8** | **75 min** |
+| **0.9880** | **98.2%** | **~9** | **~2 h** |
 
 </div>
 
@@ -69,15 +69,20 @@ Out-of-fold macro F0.5 on all 2.21M training entities (3 folds grouped by Source
 
 | Configuration | Macro F0.5 |
 |---|:---:|
-| Stage A filter score + best threshold | 0.9682 |
-| Stage B matcher + threshold 0.5 | 0.9858 |
-| Stage B matcher + threshold 0.7 | 0.9868 |
-| **Stage B matcher + expected-F0.5 selection** (submitted) | **0.9869** |
+| Stage A filter score + best threshold | 0.9679 |
+| Stage B matcher + threshold 0.5 | 0.9859 |
+| Stage B matcher + expected-F0.5 selection | 0.9869 |
+| Stage C re-scorer + threshold 0.7 | 0.9879 |
+| **Stage C re-scorer + expected-F0.5 selection** (submitted) | **0.9880** |
 
-Per country: **US 0.9873**, **India 0.9862**. As a stand-in for the unseen France, a model trained
-on one country and scored on the other gets 0.973–0.977.
+Per country: **US 0.9883**, **India 0.9876**.
 
-On the test set, the submission has 5.84M predicted matches: 3.4 per entity in every country, with
+France never appears in training, so we simulated that situation. A matcher trained on US only and
+scored on India reaches 0.9517, and self-training on India's own confident predictions lifts it to
+0.9555. (Stage A features were excluded for this test because stage A saw India labels.) The
+submitted models learn from both countries, and France additionally gets self-training.
+
+On the test set, the submission has 5.93M predicted matches: 3.4–3.5 per entity in every country, with
 5–6% of entities left empty (the training singleton rate is 5.6%). It passes the organisers'
 validator.
 
@@ -88,10 +93,12 @@ validator.
 ```mermaid
 flowchart TD
     A["3 TSV sources<br/>12.5M train · 11.7M test records"] --> B["Normalise names + addresses"]
-    B --> C["Blocking: rare shared keys, sparse top-k<br/>~51 candidates per entity"]
-    C --> D["Stage A filter: LightGBM on 29 cheap features<br/>~8 candidates per entity"]
+    B --> C["Blocking: rare shared keys, sparse top-k<br/>~52 candidates per entity"]
+    C --> D["Stage A filter: LightGBM on 29 cheap features<br/>~9 candidates per entity"]
     D --> E["Stage B matcher: LightGBM on 89 features"]
-    E --> F["Decision: one entity per record,<br/>expected-F0.5 subset per entity"]
+    E --> S["Stage C re-scorer: agreement with the<br/>entity's other confident matches"]
+    S --> T["France only: cross-fitted self-training<br/>on its own confident predictions"]
+    T --> F["Decision: one entity per record,<br/>expected-F0.5 subset per entity"]
     D -.-> G[("candidate_pairs.tsv")]
     F --> H[("matching_results.tsv")]
 ```
@@ -99,10 +106,12 @@ flowchart TD
 | Stage | What it does | Kept on train |
 |---|---|---|
 | **Normalise** | Converts native-script names with a word dictionary learned from training pairs, then `anyascii`. Strips junk (`>>`, `(ID: 51154)`, phone numbers). Splits `d/b/a` aliases and undoes OCR digits (`8ody` → `body`). Splits domains and hashtags into words (`jayproducts.com` → `jay products`). Canonicalises legal forms, street abbreviations, ordinals and states (`TN` = `Tamil Nadu` = `தமிழ்நாடு`). | — |
-| **Blocking** | Pairs records that share rare keys (name words, street words, house number × street, name word × number, …) within the same country. Scores are summed IDF weights; top-k is taken per key family, computed as a sparse matrix product (`sparse_dot_topn`). | 113.7M pairs · 98.2% of true pairs |
-| **Stage A** | A cheap LightGBM filter (2-fold cross-fitted) over rapidfuzz similarities, overlaps and house-number agreement. Its output is `candidate_pairs.tsv`. | 16.2M pairs · 99.996% of blocked true pairs |
+| **Blocking** | Pairs records that share rare keys (name words, street words, house number × street, name word × number, …) within the same country. Scores are summed IDF weights; top-k is taken per key family, computed as a sparse matrix product (`sparse_dot_topn`), with a fixed per-record tie-break so runs are reproducible. | 115.8M pairs · 98.2% of true pairs |
+| **Stage A** | A cheap LightGBM filter (2-fold cross-fitted) over rapidfuzz similarities, overlaps and house-number agreement. Its output is `candidate_pairs.tsv`. | 16.3M pairs · 99.996% of blocked true pairs |
 | **Stage B** | A LightGBM matcher on 89 features: name and address similarities, IDF overlaps, house-number relationships, made-up-name signals, label-free *modifier statistics* and competition context. | probabilities |
-| **Decision** | Each Source 2/3 record keeps only its best Source 1 entity. Each entity then keeps the top-k candidates that maximise its **expected F0.5**, computed exactly with Poisson-binomial dynamic programming. | 5.84M matches (test) |
+| **Stage C** | Re-scores every pair with stage B's score plus *agreement* features: does this candidate share the house number, street and name that the entity's other confident matches carry, and how strongly do competing Source 1 entities claim the same record? Trained on out-of-fold stage B scores. | probabilities |
+| **Self-training** | For countries absent from training (France), confident stage C predictions (≥ 0.98 or ≤ 0.02) become pseudo-labels and the matcher is retrained with them. It is cross-fitted, so no pair is scored by a model that saw its own pseudo-label. | France only |
+| **Decision** | Each Source 2/3 record keeps only its best Source 1 entity. Each entity then keeps the top-k candidates that maximise its **expected F0.5**, computed exactly with Poisson-binomial dynamic programming. | 5.93M matches (test) |
 
 ---
 
@@ -145,6 +154,13 @@ Most of the remaining loss comes from records with **no address and a name share
 Source 1 businesses**, which no model can attribute. Maximising expected per-entity F0.5 makes
 declining to predict a deliberate, scored decision rather than a threshold accident.
 
+### 5. True copies agree with each other
+
+Most copies of one business carry the same house number, street and name, while a group of
+look-alikes carries a different, shifted number. Stage C checks every candidate against the entity's
+other confident matches. That lifts out-of-fold F0.5 from 0.9869 to 0.9880, and it also catches
+Source 1 records whose own address holds the typo.
+
 Data behind the charts: [`house_number_shift.csv`](docs/assets/house_number_shift.csv),
 [`modifier_words.csv`](docs/assets/modifier_words.csv).
 
@@ -159,7 +175,7 @@ python3.12 -m venv .venv && source .venv/bin/activate
 pip install -r requirements.txt
 
 export BER_DATA_DIR=/path/to/student_resource/dataset   # contains train/ and test/
-./run.sh ber.pipeline                                   # ~75 min, peak ~15 GB RAM
+./run.sh ber.pipeline                                   # ~2 h, peak ~15 GB RAM
 ```
 
 This writes `output/matching_results.tsv` and `output/candidate_pairs.tsv` at the repository root.
@@ -216,25 +232,26 @@ pipeline regenerates all of them.
 
 ## Evaluation details
 
-**Where the remaining 1.3 points of out-of-fold loss come from:**
+**Where the remaining 1.2 points of out-of-fold loss come from:**
 
 | Error type | Entities | Loss (F0.5 points) |
 |---|---:|---:|
-| Some true matches missed | 230,618 | 0.84 |
-| Has matches, predicted none | 5,134 | 0.23 |
-| An extra wrong match | 12,800 | 0.13 |
-| Singleton given a match | 1,789 of 123,247 | 0.08 |
+| Some true matches missed | 219,021 | 0.78 |
+| Has matches, predicted none | 5,143 | 0.23 |
+| An extra wrong match | 9,098 | 0.10 |
+| Singleton given a match | 1,354 of 123,247 | 0.06 |
 
-Of the missed true pairs, 141k never reached the candidate set and 125k were rejected by the
-matcher. Of those rejected, 58% are records with an empty address.
+Of the missed true pairs, 134k never reached the candidate set and 114k were rejected by the
+model. Of those rejected, 67% are records with an empty address, and 78% have either no address or
+a name shared by five or more Source 1 entities.
 
-**Candidate funnel on the test set:** 1.7 × 10¹³ possible pairs → 97.5M after blocking → 15.5M
-after stage A (reduction ratio 0.9999991). France keeps more candidates per entity (14.2) than
-India (8.9) or the US (7.1) because its names come from a smaller vocabulary.
+**Candidate funnel on the test set:** 1.7 × 10¹³ possible pairs → 99.2M after blocking → 15.7M
+after stage A (reduction ratio 0.9999991). France keeps more candidates per entity (14.3) than
+India (8.9) or the US (7.2) because its names come from a smaller vocabulary.
 
-**Reproducibility:** a clean run from the raw TSVs reproduced the out-of-fold score (0.98687 vs
-0.98687) and 99.6% of the predicted pairs. The small differences come from multithreaded LightGBM
-and ties at the top-k boundary.
+**Reproducibility:** every model is trained with deterministic LightGBM and fixed seeds, and
+blocking breaks score ties with a fixed per-record hash. Earlier, thread scheduling made runs differ
+on about 0.4% of pairs. A clean run from the raw TSVs takes about 2 hours.
 
 The full methodology, feature list and error analysis are in [`docs/METHODOLOGY.md`](docs/METHODOLOGY.md).
 
