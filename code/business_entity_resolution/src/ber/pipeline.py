@@ -13,7 +13,7 @@ Steps (each reads the previous step's files from WORK_DIR):
   stage_b  rich pair features for the stage A candidates
   train    3-fold LightGBM matcher (grouped by S1) + out-of-fold evaluation
   stage_c  agreement features from the out-of-fold matcher scores + 3-fold
-           LightGBM re-scorer + out-of-fold evaluation
+           LightGBM re-scorer trained with decoy twins + out-of-fold evaluation
   predict  score test candidates (matcher -> re-scorer), one S1 per target,
            expected-F0.5 selection, write both TSVs
 """
@@ -66,7 +66,9 @@ def step_train():
 
 
 def step_stage_c():
-    experiment.report(stage_c.train(), "stage C")
+    orig, twins = stage_c.train()
+    experiment.report(orig, "stage C, train candidate lists")
+    experiment.report(twins, "stage C, with decoy twins (test-like)")
 
 
 def step_predict():

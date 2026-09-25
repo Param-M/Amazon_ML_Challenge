@@ -52,8 +52,8 @@ seeds and blocking breaks ties with a fixed hash, so re-runs are reproducible.
 | stats | `stats` | unsupervised token / modifier statistics per split | `stats/{split}/*` |
 | stage_b | `rich`, `stage_b` | rich pair features + competition context | `rich/{split}/part*.parquet` |
 | train | `experiment.oof`, `stage_b.train_oof` | 3-fold LightGBM matcher grouped by S1 + OOF evaluation | `models/stage_b_*`, `oof_main.parquet` |
-| stage_c | `stage_c` | agreement features from the OOF matcher scores + 3-fold LightGBM re-scorer + OOF evaluation | `models/stage_c_*`, `oof_c.parquet` |
-| predict | `predict`, `decide`, `output` | fold-assigned matcher scores → re-scorer; cross-fitted self-training for countries absent from train (France); one S1 per target, expected-F0.5 selection | `output/*.tsv` |
+| stage_c | `stage_c` | agreement features from the OOF matcher scores, decoy twins added at a label-free per-country rate, 3-fold LightGBM re-scorer + OOF evaluation (plain and test-like) | `models/stage_c_*`, `oof_c.parquet`, `oof_c_twins.parquet` |
+| predict | `predict`, `decide`, `output` | fold-assigned matcher scores → re-scorer → decoy-shift cap; cross-fitted self-training for countries absent from train (France); one S1 per target, expected-F0.5 selection | `output/*.tsv`, `test_scores_final.parquet` |
 
 ## Source layout
 
@@ -70,12 +70,13 @@ src/ber/
   stats.py       unsupervised lookup tables (IDF, name ambiguity, modifier stats)
   rich.py        rich pair features + competition context
   stage_b.py     matcher training helpers
-  stage_c.py     agreement features + re-scorer (stacked on the matcher's OOF scores)
+  stage_c.py     agreement features + re-scorer (stacked on the matcher's OOF scores),
+                 decoy twins for training, decoy-shift cap
   decide.py      one-S1-per-target + expected-F0.5 subset selection
   metrics.py     ground truth + macro F0.5
   evaluate.py    offline evaluation / decision-rule sweep
   experiment.py  OOF and leave-one-country-out experiments
-  predict.py     scores test (matcher -> re-scorer, self-training for unseen countries), writes submission
+  predict.py     scores test (matcher -> re-scorer -> cap, self-training for unseen countries), writes submission
   output.py      TSV writers
   pipeline.py    end-to-end driver
   figures.py     README figures (optional, needs matplotlib; run after the pipeline)

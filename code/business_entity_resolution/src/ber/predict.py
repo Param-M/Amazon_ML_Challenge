@@ -1,4 +1,4 @@
-"""Score the test candidates (stage B -> stage C) and write the submission."""
+"""Score the test candidates (stage B -> stage C, decoy-shift cap) and write the submission."""
 import json
 import sys
 
@@ -101,16 +101,18 @@ def self_train(Sc: pl.DataFrame, Sb: pl.DataFrame, countries: set, k: int = 3, r
 
 
 def run(rule: str = "expected_f", out_dir=OUTPUT_DIR, self_training: bool = True):
+    R = F.load_records("test")
     Sb = score_b("test")
     C.build("test", Sb)
-    S = score_c("test")
+    S = C.cap_decoy_shifts(score_c("test"), Sb, R)
     new = unseen_countries()
     if self_training and new:
         Sb = self_train(S, Sb, new)
         Sb.write_parquet(work("test_scores_b_selftrained.parquet"))
         C.build("test", Sb)
-        S = score_c("test")
-    R = F.load_records("test").select("id", "src", "country")
+        S = C.cap_decoy_shifts(score_c("test"), Sb, R)
+    S.write_parquet(work("test_scores_final.parquet"))
+    R = R.select("id", "src", "country")
     cands = pl.read_parquet(work("test_cands.parquet")).select("qr", "tr")
     S1 = decide.one_per_target(S)
     M = decide.select_expected_f(S1) if rule == "expected_f" else decide.select_threshold(S1, float(rule))

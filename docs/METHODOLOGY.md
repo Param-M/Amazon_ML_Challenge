@@ -12,12 +12,13 @@ We link Source 1 businesses to their Source 2/3 records with a three-stage pipel
 1. **Blocking.** IDF-weighted blocking on rare name and address keys, computed as sparse top-k matrix products, finds 98.2% of true pairs at about 52 candidates per entity.
 2. **Candidate filter (stage A).** A cross-fitted LightGBM filter over cheap similarities cuts candidates to about 9 per entity while keeping 99.996% of the true pairs that survive blocking.
 3. **Matcher (stage B).** A LightGBM model over 89 features scores the remaining pairs.
-4. **Re-scorer (stage C).** A second LightGBM stacked on the matcher's out-of-fold scores adds *agreement* features: does a candidate carry the house number, street and name that the entity's other confident matches carry? For France, which never appears in training, the matcher is additionally retrained on France's own confident predictions (cross-fitted self-training).
+4. **Re-scorer (stage C).** A second LightGBM stacked on the matcher's out-of-fold scores adds *agreement* features: does a candidate carry the house number, street and name that the entity's other confident matches carry? It is trained with **decoy twins** (look-alikes duplicated the way the test data builds them) and may not raise a pair at a look-alike house-number shift above the matcher's score. For France, which never appears in training, the matcher is additionally retrained on France's own confident predictions (cross-fitted self-training).
 5. **Decision.** The final match set for each entity is the subset that maximises its **expected F0.5**, after assigning each Source 2/3 record to at most one Source 1 entity.
 
-Out-of-fold macro F0.5 on the full training set is **0.9880** (0.9869 before the stage C re-scorer). The main contributions:
+Out-of-fold macro F0.5 on the full training set is **0.9876** (0.9869 before the stage C re-scorer), and **0.9880** on a test-like version of the training data with decoy twins added. Our v2 submission scored 0.976 on the leaderboard against 0.988 out-of-fold. We traced the gap, without test labels, to look-alikes that come in pairs in the test data (§5.1), and v3 fixes it. The main contributions:
 - Features that expose how the dataset's look-alike businesses are constructed: a house number shifted by a few units and one name word added or replaced.
 - A label-free "modifier statistic" that learns which added words mark a look-alike, computed on each split separately. This lets the model transfer to France, which never appears in training.
+- Label-free test diagnostics: compare what the model predicts on test with what the training labels say it should look like (house-number shift profile, matches per entity). This found the v2 failure and checks the fix.
 
 ---
 
@@ -55,7 +56,8 @@ TSV ──► normalise ──► blocking (115.8M pairs train / 99.2M test)
                stage B: 89 rich features + LightGBM (3 folds)
                           │
                           ▼
-               stage C: + 13 agreement features, LightGBM on OOF stage B scores
+               stage C: + stage B score, 13 agreement features, LightGBM on OOF scores
+                          │        + decoy twins in training, decoy-shift cap
                           │        (France: cross-fitted self-training of stage B first)
                           ▼
       one S1 per target  ──►  per-entity expected-F0.5 subset ──► matching_results.tsv
@@ -125,6 +127,10 @@ TSV ──► normalise ──► blocking (115.8M pairs train / 99.2M test)
 
 LightGBM (127 leaves, learning rate 0.05, 500 rounds), 3 folds grouped by S1 record, trained on out-of-fold stage B scores. Test scores are the mean of the three fold models.
 
+*Decoy twins.* In test, a look-alike often appears as two records at the same shifted house number (e.g. `... Corp` and `... Westgate LLC` at 2027 when the business is at 2026). Two look-alikes then "support" each other's number, a pattern that in training almost only true copies produce. Before training stage C we therefore duplicate a share of training's single off-number negatives. The copy keeps the pair's features, gets a stage B score with N(0, 1) logit noise, and has label 0. We then recompute the agreement features on the augmented candidate lists. The share per country is label-free: one minus the ratio of single off-number groups per S1 record in test versus train candidate lists (US 0.435, India 0.082; 859k twins).
+
+*Decoy-shift cap.* For upward house-number shifts where at least 85% of training candidates are look-alikes (+1, +2, +3, +4, +5, +7, +9, +11, +13, +21), the final score is min(stage C, stage B). Stage C can still lower such a pair but not raise it. This costs 0.0001–0.0003 out-of-fold.
+
 **Self-training for unseen countries.** Countries present in test but absent from train are detected automatically (France here). Their pairs that stage C scores ≥ 0.98 or ≤ 0.02 become pseudo-labels. The matcher is retrained three times: fold *f*'s model sees the labelled train rows plus the pseudo-labels of the *other* folds, and re-scores fold *f*'s pairs, so no pair is scored by a model that saw its own pseudo-label. Stage C then re-scores. We simulated this on train: a matcher trained on US only and applied to India (with stage A features removed, since stage A saw India labels) scores 0.9517; adding India pseudo-labels (87% of pairs, 99.1% correct) raises it to 0.9555. US and India test scores are left unchanged.
 
 **Reproducibility.** All LightGBM models are trained with `deterministic=True` and fixed seeds. Blocking breaks score ties with a fixed per-record hash, salted per key family, so its top-k is identical across runs. It previously depended on thread scheduling. All models are LightGBM (MIT license): 2 filter, 3 matcher and 3 re-scorer models (1.75M tree nodes, 98 MB of model files), plus 3 matcher refits trained on the fly for France self-training. That's about 3M tree nodes in total, far under the 8B-parameter limit.
@@ -137,36 +143,45 @@ LightGBM (127 leaves, learning rate 0.05, 500 rounds), 3 folds grouped by S1 rec
 
 ## 5. Results & Error Analysis
 
-- **F_0.5 Score (macro):** **0.9880** out-of-fold on all 2,206,821 training S1 entities (India 0.9876, US 0.9883)
+- **F_0.5 Score (macro):** **0.9876** out-of-fold on all 2,206,821 training S1 entities (India 0.9874, US 0.9878); **0.9880** on the test-like training set with decoy twins. Leaderboard: v2 0.976; v3 pending.
 
-| configuration (train, OOF) | macro F0.5 |
-|---|---|
-| stage A score only, best threshold (0.9) | 0.9679 |
-| stage B, one-per-target + threshold 0.5 | 0.9859 |
-| stage B, one-per-target + threshold 0.7 | 0.9868 |
-| stage B, one-per-target + expected-F0.5 | 0.9869 |
-| stage C, one-per-target + threshold 0.7 | 0.9879 |
-| **stage C, one-per-target + expected-F0.5** (submitted) | **0.9880** |
+| configuration (train, OOF) | train candidate lists | with decoy twins (test-like) |
+|---|---|---|
+| stage A score only, best threshold (0.9) | 0.9679 | |
+| stage B, one-per-target + threshold 0.5 | 0.9859 | |
+| stage B, one-per-target + threshold 0.7 | 0.9868 | |
+| stage B, one-per-target + expected-F0.5 | 0.9869 | 0.9867 |
+| v2 stage C, one-per-target + expected-F0.5 | 0.9880 | 0.9815 |
+| **v3 stage C (twins + cap), one-per-target + expected-F0.5** (submitted) | **0.9876** | **0.9880** |
+
+### 5.1 The leaderboard gap and how we found it without test labels
+
+v2 scored 0.976 on the leaderboard against 0.988 out-of-fold. We compared test predictions with statistics that the training labels pin down:
+- **House-number shift profile.** Training says how many true matches per entity sit at each signed shift. At the look-alike shifts (+3 … +13, +21), the US test set should have about 2,500 matches. v2 predicted 35,520 and stage B on its own predicted 2,450, so stage C was adding them. At +1/+2, v2 had 24,991 against about 10,600 expected.
+- **Why.** Among US candidates at a number different from the entity's, groups of two records at the same number make up 40% in test versus 11% in train. The test data builds look-alikes in pairs, and the pair backs itself up through the agreement features. Adding twins to the training data at the measured rate reproduces the failure: v2's stage C drops to 0.978 on the US while stage B holds at 0.987.
+- **After the fix,** US matches at look-alike shifts are 2,285 and at +1/+2 9,559, both at the expected level. India and US predict 3.36–3.37 matches per entity with 5.8% empty, the same empty share as out-of-fold on train.
+- **Matches per entity** has the same distribution in both training countries (0 matches: 5.6%, 3: 24.0%, 6+: 11.5%), so it is a useful check for the test set. France predicts 3.49 matches per entity with 5.0% empty, so it may still over-match. However, shifting France's scores until its distribution matched India/US would, in the US → India transfer simulation, have cost 0.0019, so we did not apply it.
+- **Rejected on validation:** within-country percentiles of the modifier statistics (US → India transfer 0.9750 → 0.9702).
 
 Cross-country transfer, a proxy for the unseen France:
 - A stage B model trained on one country scores 0.9733 (US → India) and 0.9774 (India → US), against same-country OOF scores of 0.9863 and 0.9873.
 - These figures are optimistic: the stage A score they use was trained on both countries. With stage A features removed, US → India drops to 0.9517; self-training on India's confident predictions recovers it to 0.9555.
 - The submitted models are trained on both countries, and France additionally gets self-training.
 
-Where the remaining 1.20 points of OOF loss come from:
+Where the remaining 1.24 points of OOF loss come from (v3):
 
 | error type | entities | loss (pts of macro F0.5) |
 |---|---|---|
-| some true matches missed | 219,021 | 0.78 |
-| has matches, predicted none | 5,143 | 0.23 |
-| extra wrong match only | 9,098 | 0.10 |
-| singleton given a match | 1,354 of 123,247 | 0.06 |
+| some true matches missed | 224,462 | 0.81 |
+| has matches, predicted none | 5,211 | 0.24 |
+| extra wrong match only | 9,440 | 0.10 |
+| singleton given a match | 1,356 of 123,247 | 0.06 |
 
 - **Common false positives (wrong merges):**
   - Look-alikes with the house number shifted by 1–2 and the name unchanged, or with a benign-looking word added.
   - Name-only S2/S3 records whose generic name ("Victory Technologies Limited") belongs to a different S1 record with the same name.
   - Same address with a different made-up name, which is sometimes a trade name of the entity and sometimes a different business.
-- **Common false negatives (missed matches):** 248k missed true pairs; 134k never reached the candidate set and 114k were rejected by the model.
+- **Common false negatives (missed matches):** 258k missed true pairs; 134k never reached the candidate set and 124k were rejected by the model.
   - Of the rejected pairs, 67% are Source 2/3 records **with an empty address**; 78% have either no address or a name shared by five or more S1 records.
   - Many of the rest are made-up trade names at the exact S1 address, which are true matches only 55% of the time (the same recipe also makes look-alike decoys). Their syllables carry no signal either way.
   - Both groups are largely unidentifiable, and declining to predict is the F0.5-optimal choice.
@@ -176,7 +191,7 @@ Where the remaining 1.20 points of OOF loss come from:
 
 ## 6. Conclusion
 
-Most of the result comes from two things. Recall-oriented blocking that runs as sparse matrix products keeps 98.2% of true pairs within ~9 candidates per entity. Features that describe how look-alikes are built — shifted house numbers, and added words whose "look-alike-ness" is estimated without labels — cleanly separate noisy duplicates from sibling businesses. Optimising expected per-entity F0.5 directly handles singletons and ambiguous name-only records in a principled way. The main lesson is that on this data the address *numbers* and the *identity of the changed word* matter more than string similarity itself.
+Most of the result comes from two things. Recall-oriented blocking that runs as sparse matrix products keeps 98.2% of true pairs within ~9 candidates per entity. Features that describe how look-alikes are built — shifted house numbers, and added words whose "look-alike-ness" is estimated without labels — cleanly separate noisy duplicates from sibling businesses. Optimising expected per-entity F0.5 directly handles singletons and ambiguous name-only records in a principled way. The main lesson is that on this data the address *numbers* and the *identity of the changed word* matter more than string similarity itself. The second lesson came from the leaderboard: a stacked model can learn a structure (look-alikes appearing alone) that the test data doesn't share. Checking test predictions against label-derived statistics found the problem without any test labels.
 
 ---
 
@@ -199,7 +214,7 @@ Steps: `raw → indic → prepare → block → stage_a → stats → stage_b �
 | `blocking.py` | key families + IDF sparse top-k blocking |
 | `features.py`, `stage_a.py` | cheap features, cross-fitted filter → `candidate_pairs.tsv` |
 | `stats.py`, `rich.py`, `stage_b.py` | unsupervised statistics, rich features, matcher |
-| `stage_c.py` | agreement features + stacked re-scorer |
+| `stage_c.py` | agreement features, decoy twins, stacked re-scorer, decoy-shift cap |
 | `decide.py`, `predict.py`, `output.py` | self-training for unseen countries, one-per-target, expected-F0.5 selection, TSV writers |
 | `metrics.py`, `evaluate.py`, `experiment.py` | macro F0.5, decision-rule sweep, OOF / cross-country experiments |
 
@@ -209,4 +224,4 @@ Top stage B features by gain (fold 0): stage A score; the pair's rank among the 
 
 Blocking recall over development iterations (India, train): 91.7% (single key family, name/address tokens) → 97.5% (+ name×address composite keys) → 98.1% (+ per-family top-k, number-pair and number×locality keys, hyphen-joined numbers, concatenated-name segmentation).
 
-Test submission profile: 5,925,526 matched pairs. Per S1 record: France 3.51 matches with 5.0% empty; India 3.37 matches with 5.8% empty; US 3.45 matches with 5.7% empty (training singleton rate: 5.6%). Self-training pseudo-labelled 3.46M of France's 3.70M candidate pairs.
+Test submission profile (v3): 5,863,062 matched pairs. Per S1 record: France 3.49 matches with 5.0% empty; India 3.36 with 5.8% empty; US 3.37 with 5.8% empty (training singleton rate: 5.6%). Self-training pseudo-labelled 3.48M of France's 3.70M candidate pairs. v2 had 5,925,526 pairs; about 47k of them were US matches at look-alike shifts above the expected rate, which stage C had added.
