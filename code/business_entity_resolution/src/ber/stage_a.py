@@ -21,7 +21,8 @@ from .metrics import gt_pairs
 
 PARAMS = dict(objective="binary", learning_rate=0.1, num_leaves=127, min_data_in_leaf=200,
               feature_fraction=0.8, bagging_fraction=0.7, bagging_freq=1, lambda_l2=1.0,
-              num_threads=N_JOBS, verbose=-1)
+              num_threads=N_JOBS, verbose=-1,
+              deterministic=True, force_col_wise=True, seed=0)
 ROUNDS = 300
 KEEP = dict(top_q=16, top_t=2, floor=0.002)
 

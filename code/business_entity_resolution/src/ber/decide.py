@@ -60,7 +60,7 @@ def best_k(P: np.ndarray) -> tuple:
 
 def select_expected_f(S: pl.DataFrame, col: str = "p", max_n: int = 12, min_p: float = 0.01) -> pl.DataFrame:
     """Per S1 record choose the top-k of its candidates maximising expected F0.5."""
-    S = S.filter(pl.col(col) >= min_p).sort(["qr", col], descending=[False, True])
+    S = S.filter(pl.col(col) >= min_p).sort(["qr", col, "tr"], descending=[False, True, False])
     S = S.with_columns(pl.int_range(pl.len()).over("qr").alias("_pos")).filter(pl.col("_pos") < max_n)
     g = S.group_by("qr", maintain_order=True).agg(pl.col(col), pl.len().alias("n"))
     keep = []

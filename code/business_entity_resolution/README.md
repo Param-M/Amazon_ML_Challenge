@@ -36,9 +36,9 @@ By default the three directories are `data/`, `work/` and `output/` at the
 repository root (next to the `code/` folder). `BER_JOBS` sets the number of worker processes and
 threads (default: all cores).
 
-A clean run from raw data took 75 minutes on a 10-core Apple M5 with 24 GB RAM
-(peak memory around 15 GB). Multithreaded LightGBM and top-k tie-breaking make
-re-runs differ very slightly (99.6% of matched pairs identical between two runs).
+A clean run from raw data took about 2 hours (124 min) on a 10-core Apple M5 with
+24 GB RAM (peak memory around 15 GB). All LightGBM models are deterministic with fixed
+seeds and blocking breaks ties with a fixed hash, so re-runs are reproducible.
 
 ## Steps
 
@@ -51,8 +51,9 @@ re-runs differ very slightly (99.6% of matched pairs identical between two runs)
 | stage_a | `features.cheap`, `stage_a` | cheap similarity features + 2-fold cross-fitted LightGBM filter | `{split}_cands.parquet` |
 | stats | `stats` | unsupervised token / modifier statistics per split | `stats/{split}/*` |
 | stage_b | `rich`, `stage_b` | rich pair features + competition context | `rich/{split}/part*.parquet` |
-| train | `experiment.oof`, `stage_b.train_oof` | 3-fold LightGBM matcher grouped by S1 + OOF evaluation | `models/*`, `oof_main.parquet` |
-| predict | `predict`, `decide`, `output` | fold-averaged scores, one S1 per target, expected-F0.5 selection | `output/*.tsv` |
+| train | `experiment.oof`, `stage_b.train_oof` | 3-fold LightGBM matcher grouped by S1 + OOF evaluation | `models/stage_b_*`, `oof_main.parquet` |
+| stage_c | `stage_c` | agreement features from the OOF matcher scores + 3-fold LightGBM re-scorer + OOF evaluation | `models/stage_c_*`, `oof_c.parquet` |
+| predict | `predict`, `decide`, `output` | fold-assigned matcher scores → re-scorer; cross-fitted self-training for countries absent from train (France); one S1 per target, expected-F0.5 selection | `output/*.tsv` |
 
 ## Source layout
 
@@ -68,12 +69,13 @@ src/ber/
   stage_a.py     learned candidate filter -> candidate_pairs
   stats.py       unsupervised lookup tables (IDF, name ambiguity, modifier stats)
   rich.py        rich pair features + competition context
-  stage_b.py     final matcher training helpers
+  stage_b.py     matcher training helpers
+  stage_c.py     agreement features + re-scorer (stacked on the matcher's OOF scores)
   decide.py      one-S1-per-target + expected-F0.5 subset selection
   metrics.py     ground truth + macro F0.5
   evaluate.py    offline evaluation / decision-rule sweep
   experiment.py  OOF and leave-one-country-out experiments
-  predict.py     scores test, writes submission
+  predict.py     scores test (matcher -> re-scorer, self-training for unseen countries), writes submission
   output.py      TSV writers
   pipeline.py    end-to-end driver
   figures.py     README figures (optional, needs matplotlib; run after the pipeline)

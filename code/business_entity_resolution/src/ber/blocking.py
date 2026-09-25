@@ -83,9 +83,9 @@ def record_keys(df: pl.DataFrame) -> pl.DataFrame:
 
 
 def _csr(keys: pl.DataFrame, n_rows: int, n_cols: int, weighted: bool):
-    data = keys["w"].to_numpy() if weighted else np.ones(keys.height, dtype=np.float32)
+    data = keys["w"].to_numpy().astype(np.float64) if weighted else np.ones(keys.height)
     return sp.csr_matrix((data, (keys["i"].to_numpy(), keys["k"].to_numpy())),
-                         shape=(n_rows, n_cols), dtype=np.float32)
+                         shape=(n_rows, n_cols), dtype=np.float64)
 
 
 def _topn(A, B, top_n: int, chunk: int = 20000):
@@ -99,6 +99,29 @@ def _topn(A, B, top_n: int, chunk: int = 20000):
     return np.concatenate(rows), np.concatenate(cols), np.concatenate(vals)
 
 
+TIE_EPS = 1e-6
+
+
+def _tiebreak(n: int, salt: int = 0) -> np.ndarray:
+    """Deterministic pseudo-random value in [0, 1) per record index (salt = key family)."""
+    mix = np.uint64((salt * 0x632BE59BD9B4E019) & 0xFFFFFFFFFFFFFFFF)
+    idx = np.arange(n, dtype=np.uint64) + mix
+    x = (idx * np.uint64(0x9E3779B97F4A7C15)) >> np.uint64(40)
+    return x.astype(np.float64) / float(1 << 24)
+
+
+def _with_tiebreak(M, u: np.ndarray):
+    """Scale row i by (1 + eps * u_i): scores become S * (1 + eps u_q)(1 + eps u_t).
+
+    Candidates with equal scores at the top-k cut-off would otherwise be chosen
+    by thread scheduling; this makes the candidate set identical from run to run
+    without adding any non-zero entries (sparsity is unchanged).
+    """
+    M = M.tocsr(copy=True)
+    M.data *= np.repeat(1 + TIE_EPS * u, np.diff(M.indptr))
+    return M
+
+
 def block_country(q: pl.DataFrame, t: pl.DataFrame, cap_t, cap_q, topk):
     """q: S1 records, t: S2/S3 records of one country. Returns (qi, ti) candidate rows."""
     qk, tk = record_keys(q), record_keys(t)
@@ -107,16 +130,18 @@ def block_country(q: pl.DataFrame, t: pl.DataFrame, cap_t, cap_q, topk):
     dfq = qk.group_by("key").agg(pl.len().alias("dfq"))
     keep = (dft.join(dfq, on="key").filter((pl.col("dft") <= cap_t) & (pl.col("dfq") <= cap_q))
             .with_columns((pl.lit(math.log(n_t + 1)) - pl.col("dft").cast(pl.Float64).log())
-                          .cast(pl.Float32).alias("w"))
-            .with_row_index("k"))
+                          .alias("w"))
+            .sort("key").with_row_index("k"))   # fixed column order -> fixed summation order
     qk = qk.join(keep.select("key", "k", "w"), on="key")
     tk = tk.join(keep.select("key", "k", "w"), on="key")
     out = []
-    for fam, (k_fwd, k_rev) in topk.items():
+    for salt, (fam, (k_fwd, k_rev)) in enumerate(topk.items()):
+        # each family breaks ties differently, so tied candidates are spread across families
+        uq, ut = _tiebreak(q.height, salt), _tiebreak(t.height, salt + 101)
         qf = qk if fam == "all" else qk.filter(pl.col("fam") == FAMS[fam])
         tf = tk if fam == "all" else tk.filter(pl.col("fam") == FAMS[fam])
-        Q = _csr(qf, q.height, keep.height, weighted=True)
-        T = _csr(tf, t.height, keep.height, weighted=False)
+        Q = _with_tiebreak(_csr(qf, q.height, keep.height, weighted=True), uq)
+        T = _with_tiebreak(_csr(tf, t.height, keep.height, weighted=False), ut)
         fr, fc, _ = _topn(Q, T.T.tocsr(), k_fwd)       # S1 -> best targets
         rr, rc, _ = _topn(T, Q.T.tocsr(), k_rev)       # target -> best S1
         out.append(pl.DataFrame({"qi": np.concatenate([fr, rc]).astype(np.uint32),

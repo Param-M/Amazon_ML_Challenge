@@ -54,7 +54,8 @@ def feature_names(df: pl.DataFrame, drop=()) -> list:
 
 PARAMS = dict(objective="binary", learning_rate=0.08, num_leaves=255, min_data_in_leaf=100,
               feature_fraction=0.7, bagging_fraction=0.8, bagging_freq=1, lambda_l2=2.0,
-              max_bin=255, num_threads=N_JOBS, verbose=-1)
+              max_bin=255, num_threads=N_JOBS, verbose=-1,
+              deterministic=True, force_col_wise=True, seed=0)
 
 
 def fold_ids(df: pl.DataFrame, k: int) -> np.ndarray:
@@ -62,7 +63,7 @@ def fold_ids(df: pl.DataFrame, k: int) -> np.ndarray:
 
 
 def train_oof(df: pl.DataFrame, feats: list, k: int = 3, rounds: int = 800, tag: str = "main",
-              train_mask=None, params=None):
+              train_mask=None, params=None, prefix: str = "stage_b"):
     """K-fold (grouped by S1) out-of-fold predictions; saves the fold models."""
     params = {**PARAMS, **(params or {})}
     folds = fold_ids(df, k)
@@ -77,9 +78,9 @@ def train_oof(df: pl.DataFrame, feats: list, k: int = 3, rounds: int = 800, tag:
         dtr = lgb.Dataset(X[tr], y[tr], feature_name=feats, free_raw_data=False)
         m = lgb.train(params, dtr, rounds)
         oof[va] = m.predict(X[va], num_threads=N_JOBS)
-        m.save_model(str(work("models", f"stage_b_{tag}_fold{f}.txt")))
+        m.save_model(str(work("models", f"{prefix}_{tag}_fold{f}.txt")))
         print(f"  fold {f}: trained on {tr.sum()} rows in {time.time() - t0:.0f}s", flush=True)
-    work("models", f"stage_b_{tag}_features.json").write_text(json.dumps(feats))
+    work("models", f"{prefix}_{tag}_features.json").write_text(json.dumps(feats))
     return oof
 
 

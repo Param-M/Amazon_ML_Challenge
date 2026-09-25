@@ -12,13 +12,15 @@ Steps (each reads the previous step's files from WORK_DIR):
   stats    unsupervised token / modifier statistics per split
   stage_b  rich pair features for the stage A candidates
   train    3-fold LightGBM matcher (grouped by S1) + out-of-fold evaluation
-  predict  score test candidates, one S1 per target, expected-F0.5 selection,
-           write both TSVs
+  stage_c  agreement features from the out-of-fold matcher scores + 3-fold
+           LightGBM re-scorer + out-of-fold evaluation
+  predict  score test candidates (matcher -> re-scorer), one S1 per target,
+           expected-F0.5 selection, write both TSVs
 """
 import sys
 import time
 
-from . import blocking, experiment, indic_dict, metrics, predict, prepare, stage_a, stage_b, stats
+from . import blocking, experiment, indic_dict, metrics, predict, prepare, stage_a, stage_b, stage_c, stats
 
 
 def step_raw():
@@ -63,13 +65,17 @@ def step_train():
     experiment.oof()
 
 
+def step_stage_c():
+    experiment.report(stage_c.train(), "stage C")
+
+
 def step_predict():
-    predict.run("main")
+    predict.run()
 
 
 STEPS = [("raw", step_raw), ("indic", step_indic), ("prepare", step_prepare), ("block", step_block),
          ("stage_a", step_stage_a), ("stats", step_stats), ("stage_b", step_stage_b),
-         ("train", step_train), ("predict", step_predict)]
+         ("train", step_train), ("stage_c", step_stage_c), ("predict", step_predict)]
 
 
 def main(start: str = "raw"):

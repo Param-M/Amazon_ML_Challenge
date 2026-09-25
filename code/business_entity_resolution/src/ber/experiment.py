@@ -22,6 +22,14 @@ def _truth():
     return E.load_truth(R)
 
 
+def report(S: pl.DataFrame, label: str):
+    """Print the decision-rule sweep for scored train candidates S (qr, tr, p)."""
+    gt, s1 = _truth()
+    print(f"{label} (out-of-fold):")
+    with pl.Config(tbl_width_chars=250, tbl_cols=20):
+        print(E.sweep(S, gt, s1, taus=(0.3, 0.4, 0.5, 0.6, 0.7)))
+
+
 def oof(rounds: int = 800, tag: str = "main", drop=()):
     df = B.load("train")
     feats = B.feature_names(df, drop)
@@ -29,9 +37,7 @@ def oof(rounds: int = 800, tag: str = "main", drop=()):
     p = B.train_oof(df, feats, k=3, rounds=rounds, tag=tag)
     S = df.select("qr", "tr", "y").with_columns(pl.Series("p", p))
     S.write_parquet(work(f"oof_{tag}.parquet"))
-    gt, s1 = _truth()
-    with pl.Config(tbl_width_chars=250, tbl_cols=20):
-        print(E.sweep(S, gt, s1, taus=(0.3, 0.4, 0.5, 0.6, 0.7)))
+    report(S, "stage B")
     m = lgb.Booster(model_file=str(work("models", f"stage_b_{tag}_fold0.txt")))
     imp = sorted(zip(m.feature_importance("gain"), feats), reverse=True)
     print("top features by gain:", [f"{n}:{g / imp[0][0]:.3f}" for g, n in imp[:40]])
