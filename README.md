@@ -205,6 +205,10 @@ We also tested ideas that did **not** survive a check, and left them out:
   India dropped from 0.9750 to 0.9702.
 - Shifting France's scores until its match-count distribution looks like India's and the US's.
   In the US → India simulation, the same rule cost 0.0019.
+- Dropping any one feature family to help transfer. In US → India, every family helps: without
+  the modifier statistics the score falls from 0.9750 to 0.9670.
+- Variants of France self-training (more pseudo-labels, pseudo-labels only, heavier weights, two
+  rounds). None beats the current method (0.9773 in US → India) by more than 0.0002.
 
 ---
 
