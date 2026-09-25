@@ -19,3 +19,5 @@ output_v1/
 # large generated artefacts (candidate_pairs.tsv is > GitHub's 100 MB limit)
 output/*.tsv
 *.zip
+output_*/
+repro*/
