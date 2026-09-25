@@ -86,12 +86,12 @@ validator.
 ## How it works
 
 ```mermaid
-flowchart LR
-    A["3 TSV sources<br/>12.5M train records<br/>11.7M test records"] --> B["Normalise<br/>names + addresses"]
-    B --> C["Blocking<br/>rare shared keys,<br/>sparse top-k<br/>~51 candidates / entity"]
-    C --> D["Stage A filter<br/>LightGBM, 29 cheap features<br/>~8 candidates / entity"]
-    D --> E["Stage B matcher<br/>LightGBM, 89 features"]
-    E --> F["Decision<br/>one entity per record,<br/>expected-F0.5 subset"]
+flowchart TD
+    A["3 TSV sources<br/>12.5M train · 11.7M test records"] --> B["Normalise names + addresses"]
+    B --> C["Blocking: rare shared keys, sparse top-k<br/>~51 candidates per entity"]
+    C --> D["Stage A filter: LightGBM on 29 cheap features<br/>~8 candidates per entity"]
+    D --> E["Stage B matcher: LightGBM on 89 features"]
+    E --> F["Decision: one entity per record,<br/>expected-F0.5 subset per entity"]
     D -.-> G[("candidate_pairs.tsv")]
     F --> H[("matching_results.tsv")]
 ```

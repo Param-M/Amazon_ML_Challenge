@@ -39,14 +39,14 @@ def _style(ax, t):
         ax.spines[side].set_visible(False)
     ax.spines["bottom"].set_color(t["base"])
     ax.spines["bottom"].set_linewidth(1)
-    ax.tick_params(colors=t["muted"], labelsize=9.5, length=0)
+    ax.tick_params(colors=t["muted"], labelsize=10, length=0)
     ax.grid(axis="y", color=t["grid"], linewidth=0.8, linestyle="-")
     ax.set_axisbelow(True)
 
 
 def _titles(fig, t, title, subtitle):
-    fig.text(0.055, 0.955, title, color=t["ink"], fontsize=15, fontweight="bold", va="top")
-    fig.text(0.055, 0.885, subtitle, color=t["ink2"], fontsize=10.5, va="top")
+    fig.text(0.04, 0.955, title, color=t["ink"], fontsize=14.5, fontweight="bold", va="top")
+    fig.text(0.04, 0.885, subtitle, color=t["ink2"], fontsize=10.5, va="top")
 
 
 def _rounded_columns(ax, xs, hs, width, color, fig):
@@ -70,7 +70,7 @@ def _rounded_columns(ax, xs, hs, width, color, fig):
 
 # ------------------------------------------------------------------ data
 
-def shift_data(lo: int = -12, hi: int = 24) -> pl.DataFrame:
+def shift_data(lo: int = -10, hi: int = 22) -> pl.DataFrame:
     R = F.load_records("train").select("a_hnum")
     C = pl.read_parquet(work("train_cands.parquet"), columns=["qr", "tr", "y"])
     h1 = R["a_hnum"][C["qr"].to_numpy()].cast(pl.Int64, strict=False)
@@ -108,29 +108,28 @@ def modifier_data(min_pairs: int = 300) -> pl.DataFrame:
 def plot_shift(d: pl.DataFrame, out: Path, theme: str):
     t = THEMES[theme]
     plt.rcParams["font.family"] = FONT
-    fig, ax = plt.subplots(figsize=(11.5, 5.4), dpi=200)
+    fig, ax = plt.subplots(figsize=(9.2, 5.0), dpi=200)
     fig.patch.set_facecolor(t["surface"])
-    fig.subplots_adjust(left=0.07, right=0.985, top=0.76, bottom=0.14)
+    fig.subplots_adjust(left=0.08, right=0.985, top=0.76, bottom=0.15)
     _style(ax, t)
     xs, hs = d["shift"].to_numpy(), d["pct_true"].to_numpy()
     ax.set_xlim(xs.min() - 0.7, xs.max() + 0.7)
     ax.set_ylim(0, 100)
     _rounded_columns(ax, xs, hs, 0.62, t["s1"], fig)
     ax.set_xticks(xs)
-    ax.set_xticklabels([f"{x:+d}" if x else "0" for x in xs], fontsize=8.5)
+    ax.set_xticklabels([f"{x:+d}" if x else "0" for x in xs], fontsize=8)
     ax.set_yticks([0, 25, 50, 75, 100])
     ax.set_yticklabels(["0%", "25%", "50%", "75%", "100%"])
     ax.set_xlabel("House-number difference, candidate − Source 1", color=t["ink2"], fontsize=10, labelpad=8)
     same = d.filter(pl.col("shift") == 0)["pct_true"][0]
     ax.annotate(f"same number: {same:.0f}% true matches", xy=(0, same), xytext=(1.2, same + 2),
-                color=t["ink2"], fontsize=9.5, va="center")
+                color=t["ink2"], fontsize=10, va="center")
     low = d.filter((pl.col("shift") > 0) & (pl.col("pct_true") < 5))["shift"].to_list()
     ax.text(3.0, 44, "Look-alike businesses: number moved up by "
             + ", ".join(f"{x:+d}" for x in low) + "\n→ at most 3% of these pairs are true matches",
-            color=t["ink2"], fontsize=9.5, va="bottom", linespacing=1.5)
+            color=t["ink2"], fontsize=10, va="bottom", linespacing=1.5)
     _titles(fig, t, "Look-alike businesses move the house number up by a few units",
-            "Share of candidate pairs that are true matches, by signed house-number difference "
-            "(train, stage A candidates)")
+            "Share of stage A candidate pairs that are true matches, by signed house-number difference (train)")
     fig.savefig(out, facecolor=t["surface"])
     plt.close(fig)
 
@@ -146,9 +145,9 @@ NOTES = (("US", "holdings", "+ holdings, + group, + southside … (US)", (3.0, 9
 def plot_modifiers(d: pl.DataFrame, out: Path, theme: str, notes=NOTES):
     t = THEMES[theme]
     plt.rcParams["font.family"] = FONT
-    fig, ax = plt.subplots(figsize=(11.5, 6.2), dpi=200)
+    fig, ax = plt.subplots(figsize=(9.2, 5.8), dpi=200)
     fig.patch.set_facecolor(t["surface"])
-    fig.subplots_adjust(left=0.07, right=0.985, top=0.8, bottom=0.12)
+    fig.subplots_adjust(left=0.085, right=0.985, top=0.8, bottom=0.12)
     _style(ax, t)
     ax.grid(axis="x", color=t["grid"], linewidth=0.8, linestyle="-")
     colors = {"US": t["s1"], "India": t["s2"]}
@@ -161,7 +160,7 @@ def plot_modifiers(d: pl.DataFrame, out: Path, theme: str, notes=NOTES):
         if r.height == 0:
             continue
         x, y = r["pct_same_number"][0], r["pct_true"][0]
-        ax.annotate(text, xy=(x, y), xytext=pos, color=t["ink"], fontsize=9.5, va="center",
+        ax.annotate(text, xy=(x, y), xytext=pos, color=t["ink"], fontsize=10, va="center",
                     arrowprops=dict(arrowstyle="-", color=t["muted"], lw=0.8, shrinkA=2, shrinkB=4),
                     zorder=4)
     corr = np.corrcoef(d["pct_same_number"].to_numpy(), d["pct_true"].to_numpy())[0, 1]
@@ -178,8 +177,7 @@ def plot_modifiers(d: pl.DataFrame, out: Path, theme: str, notes=NOTES):
     for txt in leg.get_texts():
         txt.set_color(t["ink2"])
     _titles(fig, t, "Decoy words give themselves away: they almost never keep the address",
-            "Each dot is a word added to a Source 1 name (candidate = S1 name + word), "
-            "train pairs with both house numbers present")
+            "One dot per word added to a Source 1 name; train pairs with both house numbers present")
     fig.savefig(out, facecolor=t["surface"])
     plt.close(fig)
 
