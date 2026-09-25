@@ -8,8 +8,8 @@ from the challenge data:
 - `output/candidate_pairs.tsv` — the exact candidate set the final model scores
 
 Only the provided training/test files are used. No external data, APIs or
-lookups. The only models are LightGBM (MIT license): 2 filter + 3 matcher models,
-~1.4M tree nodes, 73 MB in total.
+lookups. The only models are LightGBM (MIT license): 2 filter, 3 matcher and 3 re-scorer
+models (98 MB), plus 3 matcher refits for France self-training (~3M tree nodes in total).
 
 ## Setup
 

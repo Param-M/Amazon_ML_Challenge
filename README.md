@@ -262,8 +262,8 @@ The full methodology, feature list and error analysis are in [`docs/METHODOLOGY.
 - **Only the provided data.** No external databases, APIs, geocoding or lookups. The only static
   lists are naming conventions used to canonicalise addresses: US state codes, Indian state names
   and codes, and French regions and departments.
-- **Models:** LightGBM (MIT license), 2 filter models and 3 matcher models, about 1.4M tree nodes
-  in total, far below the 8B-parameter limit.
+- **Models:** LightGBM only (MIT license): 2 filter, 3 matcher and 3 re-scorer models, plus 3 matcher
+  refits for France self-training. That's about 3M tree nodes in total, far below the 8B-parameter limit.
 - **France** never appears in training. Every feature is a similarity or a statistic computed on
   the split itself, with no country one-hot and no vocabulary learned from labels outside Indian
   scripts.
